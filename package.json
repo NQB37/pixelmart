@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "dev:api": "pnpm --filter api dev",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f postgres",
