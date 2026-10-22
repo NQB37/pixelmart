@@ -13,12 +13,12 @@ PixelMart là một nền tảng thương mại điện tử học theo dự án
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Các sự cố lặp lại và nguyên nhân gốc | Đang dùng |
 | [decisions/](decisions/) | Architecture Decision Records (ADR) | Đang dùng |
 | [learning/](learning/) | Ghi chú khái niệm dùng lại được (định dạng 12 phần) | Bổ sung theo từng sprint |
+| [TESTING.md](TESTING.md) | Công cụ, quy ước đặt file và lệnh chạy test | Từ V1.2 |
 | [versions/v1/](versions/v1/) | Phạm vi V1, kiến thức cần học, kế hoạch triển khai, acceptance criteria | Đang dùng |
 
 Chỉ được tạo khi lần đầu có nội dung thật (không tạo trước):
 
 - `API.md`: ở V1.4, khi các endpoint public đầu tiên tồn tại (Swagger tại `/docs` vẫn là source of truth).
-- `TESTING.md`: ở V1.2, khi test đầu tiên chạy.
 - `DEPLOYMENT.md`: ở V6, khi deploy lần đầu.
 
 ## Quy ước
