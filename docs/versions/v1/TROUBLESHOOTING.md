@@ -36,6 +36,38 @@ Các vấn đề dự kiến, được viết **trước khi** chúng xảy ra. 
 - **Nguyên nhân gốc:** các version pnpm gần đây không chạy lifecycle script của dependency trừ khi bạn cho phép rõ ràng. Đây là biện pháp bảo mật chuỗi cung ứng (supply chain).
 - **Sửa:** phê duyệt các package cụ thể (pnpm in ra lệnh cần chạy). Commit cấu hình sinh ra trong `pnpm-workspace.yaml`. Chỉ phê duyệt những package bạn nhận ra.
 
+## V1.2 — NestJS API
+
+### Thư mục `src/` lạ xuất hiện ở gốc repo _(đã gặp 2026-10-21)_
+- **Nguyên nhân gốc:** chạy `nest g …` ở gốc repo. Nest CLI đọc `nest-cli.json` ở cwd. Ở gốc repo không có file này, nên CLI dùng `sourceRoot` mặc định là `src/` của thư mục hiện tại.
+- **Sửa:** xoá `src/` ở gốc. Chạy generator trong `apps/api`, hoặc dùng `pnpm --filter api exec nest g …`.
+
+### Vite cảnh báo `ESM syntax in a file loaded as CommonJS (vitest.config.ts)` _(đã gặp 2026-10-21)_
+- **Nguyên nhân gốc:** `apps/api/package.json` không có `"type": "module"` (cố ý, xem IMPLEMENTATION V1.2 bước 2), nên Node coi file `.ts` là CJS. Trong khi đó, file config lại dùng `import`/`export`.
+- **Sửa:** đổi tên thành `vitest.config.mts` / `vitest.config.e2e.mts`. Đuôi `.mts` luôn được hiểu là ESM. Cập nhật đường dẫn trong script `test:e2e`.
+
+### Lỗi validation chỉ trả `"Bad Request Exception"`
+- **Nguyên nhân gốc:** filter đọc `exception.message`. Danh sách lỗi của `ValidationPipe` nằm ở `exception.getResponse().message`, dưới dạng mảng.
+- **Sửa:** filter đọc `getResponse()` (IMPLEMENTATION V1.2 bước 8).
+
+### Request ID trong log là `1`, `2`, `3`… và không khớp header
+- **Nguyên nhân gốc:** chưa cấu hình `genReqId`. Mặc định pino-http dùng một bộ đếm tăng dần, không đọc và không trả header `x-request-id`.
+- **Sửa:** cấu hình `pinoHttp.genReqId` (IMPLEMENTATION V1.2 bước 9).
+
+### API chạy port 3000 thay vì 4000, hoặc log khởi động không phải JSON
+- **Nguyên nhân gốc:** `main.ts` đọc thẳng `process.env.PORT ?? 3000`, bỏ qua giá trị đã validate trong `ConfigService`. Log khởi động không phải JSON vì app chưa gọi `bufferLogs` / `useLogger`.
+- **Sửa:** IMPLEMENTATION V1.2 bước 10.
+
+### e2e test fail ngay lúc import `AppModule` với `must start with "postgresql://"` _(đã gặp 2026-10-22)_
+- **Triệu chứng:** `pnpm --filter api test:e2e` báo `Tests 1 skipped`, `Errors 1 error`, stack trỏ vào `ConfigModule.forRoot` trong `app.module.ts`.
+- **Nguyên nhân gốc:** `apps/api/.env` vẫn còn giá trị thử nghiệm (`DATABASE_URL='test'`) sau khi thử AC-1.2-02. `ConfigModule.forRoot()` được gọi ngay khi file `app.module.ts` được import (lúc decorator `@Module` chạy), nên env sai làm hỏng việc import trước khi test nào kịp chạy.
+- **Sửa:** khôi phục `DATABASE_URL` từ `apps/api/.env.example`. Khi thử AC-1.2-02, ưu tiên ghi đè bằng shell (`DATABASE_URL= pnpm dev:api`) thay vì sửa file, để không quên khôi phục.
+
+### Xoá `DATABASE_URL` trong `.env` nhưng API vẫn khởi động
+- **Nguyên nhân gốc:** biến vẫn còn trong shell. `ConfigModule` không ghi đè `process.env`, nên biến trong shell thắng. Một khả năng khác: bạn sửa nhầm `.env` ở gốc, trong khi API đọc `apps/api/.env`.
+- **Xác nhận:** `echo $DATABASE_URL` (PowerShell: `$env:DATABASE_URL`).
+- **Sửa:** `unset DATABASE_URL` (PowerShell: `Remove-Item Env:DATABASE_URL`) và sửa đúng file `apps/api/.env`.
+
 ## Các sprint sau của V1 (dự kiến)
 
 | Sprint | Vấn đề có thể gặp | Gợi ý nguyên nhân gốc |

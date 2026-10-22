@@ -87,7 +87,7 @@ Chi tiết: [`versions/v1/IMPLEMENTATION.md`](versions/v1/IMPLEMENTATION.md) · 
 | Sprint | Mục tiêu | Trạng thái |
 |---|---|---|
 | V1.1 | Nền tảng workspace: git, pnpm workspace, PostgreSQL trong Docker Compose | ✅ |
-| V1.2 | Khung NestJS API: config, health, validation, xử lý lỗi, logging, Swagger | ⬜ |
+| V1.2 | Khung NestJS API: config, health, validation, xử lý lỗi, logging, Swagger | 🟨 Chờ xác nhận |
 | V1.3 | Database schema với Prisma: model, migration, constraint, seed | ⬜ |
 | V1.4 | API catalog public: danh mục, sản phẩm, pagination | ⬜ |
 | V1.5 | Các trang storefront bằng Next.js: danh sách, chi tiết, danh mục; trạng thái loading/rỗng/lỗi | ⬜ |
@@ -110,3 +110,12 @@ _Mỗi sprint hoàn thành sẽ có một bản tóm tắt ở đây: đã tri�
 - **Còn dang dở:** bài tập troubleshooting §8 và câu hỏi ôn tập §9 chưa làm.
 - **Tech debt:** `pnpm-workspace.yaml` có `packages/*` dù chưa cần; IMPLEMENTATION ghi `pnpm@12.4.2` trong khi thực tế là 12.11.2.
 - **Sprint tiếp theo:** V1.2 — Khung NestJS API.
+
+### V1.2 — NestJS API skeleton (2026-10-22) 🟨 chờ xác nhận
+- **Đã triển khai:** `apps/api` (NestJS 12, CJS); env validation bằng zod (`validateEnv`, fail fast khi thiếu `DATABASE_URL`); `GET /health`; `HttpExceptionFilter` bắt mọi exception với một định dạng lỗi chung; request ID qua `x-request-id` (giữ ID của client, tối đa 128 ký tự); log pino (JSON ở `test`/`production`, pretty ở `development`, cả log khởi động của Nest); global `ValidationPipe`; Swagger ở `/docs`; script `dev:api` ở gốc.
+- **Đã học:** `exception.message` của lỗi validation chỉ là `"Bad Request Exception"`, danh sách lỗi thật nằm ở `getResponse().message`; pino-http mặc định đánh số request 1, 2, 3 và không đọc header; `ConfigModule.forRoot()` chạy lúc import module, nên env sai làm hỏng cả file test; package CJS cần config Vitest đuôi `.mts`.
+- **Đã test:** 11 unit test (env, filter, health) + 6 e2e test (health, request ID, 404, validation). AC-1.2-01…07 có bằng chứng trong ACCEPTANCE_CRITERIA. Lint và `tsc --noEmit` sạch.
+- **Docs đã cập nhật:** `README.md` (chạy API), `docs/DEVELOPMENT.md` (lệnh API), `docs/TESTING.md`, `docs/learning/http-and-rest.md`, `docs/learning/nestjs-fundamentals.md`, ADR-0002 (Vitest, zod, oxlint), IMPLEMENTATION, ACCEPTANCE_CRITERIA, TROUBLESHOOTING.
+- **Còn dang dở:** câu hỏi ôn tập ✋/✅ ở §9 và bài tập troubleshooting §8 chưa làm.
+- **Tech debt:** `allowBuilds` trong `pnpm-workspace.yaml` có mục `all: true` cần rà lại; chưa có controller nào dùng Swagger decorator nên response trong `/docs` chưa có schema.
+- **Sprint tiếp theo:** V1.3 — Database schema với Prisma (sau khi bạn xác nhận V1.2).

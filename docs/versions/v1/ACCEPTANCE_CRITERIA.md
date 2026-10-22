@@ -14,15 +14,17 @@ Mỗi tiêu chí phải được **kiểm chứng bằng cách chạy thật**. 
 | AC-1.1-06 | Dữ liệu còn sau `db:down`/`db:up`, và bị xoá sạch bởi `down -v` | Thí nghiệm về tính bền vững trong IMPLEMENTATION §6 | ✅ Sau `db:down` + `db:up`, `SELECT` vẫn trả dòng `1\|persist`; sau `docker compose down -v` + `db:up`, `to_regclass('ac_probe')` rỗng và `pixelmart_test` được tạo lại |
 | AC-1.1-07 | Không có secret thật nào bị commit; `.env.example` chỉ chứa giá trị giả | Xem `git show --stat HEAD` và nội dung file | ✅ Commit `abd2b64` chỉ có `.env.example` (giá trị giả `pixelmart_dev_password`), không có `.env` |
 
-## Sprint V1.2 — API skeleton
-| ID | Tiêu chí |
-|---|---|
-| AC-1.2-01 | `GET /health` trả về 200 kèm JSON |
-| AC-1.2-02 | API từ chối khởi động với thông báo rõ ràng khi thiếu một env var bắt buộc |
-| AC-1.2-03 | Route không tồn tại và lỗi được throw đều trả về đúng định dạng lỗi đã mô tả, có `requestId` |
-| AC-1.2-04 | Log là JSON có cấu trúc (dạng dễ đọc khi ở dev) và có request ID |
-| AC-1.2-05 | Truy cập được Swagger UI tại `/docs` |
-| AC-1.2-06 | `pnpm --filter api test` và `test:e2e` đều pass |
+## Sprint V1.2 — NestJS API skeleton
+
+| ID | Tiêu chí | Cách kiểm chứng | Bằng chứng |
+|---|---|---|---|
+| AC-1.2-01 | `GET /health` trả về 200 kèm JSON `{ status: "ok", uptime, timestamp }` | `curl -i localhost:4000/health`; e2e test | ✅ `curl -i localhost:4000/health` → `HTTP/1.1 200 OK`, body `{"status":"ok","uptime":3,"timestamp":"2026-10-22T19:27:23.272Z"}`; e2e `GET /health > returns 200 with status ok`; unit `HealthController > reports ok with uptime and an ISO timestamp` |
+| AC-1.2-02 | API từ chối khởi động khi thiếu hoặc rỗng `DATABASE_URL`, thông báo có tên biến. Phải gỡ biến khỏi **cả shell lẫn `apps/api/.env`** thì test mới có ý nghĩa | Unit test `validateEnv`; chạy `pnpm dev:api` với biến đã gỡ → exit code ≠ 0 và log có `DATABASE_URL` | ✅ Thiếu biến (chạy `node apps/api/dist/main` từ gốc repo, nơi không có `apps/api/.env`, sau `unset DATABASE_URL`) → `Invalid environment variables: ✖ Invalid input: expected string, received undefined → at DATABASE_URL`, `exit=1`. Rỗng (`DATABASE_URL= node dist/main`) → `✖ Invalid string: must start with "postgresql://" → at DATABASE_URL`, `exit=1`. Unit `env.schema.spec.ts` (6 test) |
+| AC-1.2-03 | Route không tồn tại (404) và lỗi bị throw (kể cả `Error` thường → 500) đều trả về cùng một định dạng `{ statusCode, error, message, path, requestId, timestamp }`. Lỗi 500 không lộ message hay stack | `curl -i localhost:4000/khong-co`; e2e và unit test của filter | ✅ `curl -i localhost:4000/khong-co` → `404`, `{"statusCode":404,"error":"Not Found","message":"Cannot GET /khong-co","path":"/khong-co","requestId":"99f5ac68-…","timestamp":"…"}`, `requestId` trùng header `x-request-id`. e2e `returns the standard error format for an unknown route`; unit `HttpExceptionFilter > hides the details of a plain Error behind a 500` (message `password=hunter2` không xuất hiện trong body, stack được log) |
+| AC-1.2-04 | Log có cấu trúc: JSON ở `test`/`production`, dạng dễ đọc ở `development`. Mỗi request có request ID trùng với header `x-request-id` và `requestId` trong response; `x-request-id` do client gửi lên được giữ nguyên | Chạy `pnpm dev:api`, gọi hai request (một request có `-H "x-request-id: test-123"`), đọc log | ✅ `NODE_ENV=production`: mọi dòng là JSON, kể cả log khởi động (`{"level":30,…,"context":"NestFactory","msg":"Starting Nest application..."}`). `NODE_ENV=development`: `[22:01:52.598] INFO (1724): request completed` kèm `req: { "id": "test-123", … }`. `curl -H "x-request-id: test-123"` → header trả về `x-request-id: test-123`. Trường request ID trong JSON là `req.id`. e2e `generates an x-request-id header`, `echoes the x-request-id sent by the client` |
+| AC-1.2-05 | Truy cập được Swagger UI tại `/docs` | Mở `http://localhost:4000/docs` | ✅ `curl localhost:4000/docs` → `200`, `<title>Swagger UI</title>`; `/docs-json` có `"paths":{"/health":{"get":{"operationId":"HealthController_check"…` |
+| AC-1.2-06 | `pnpm --filter api test` và `pnpm --filter api test:e2e` (Vitest) đều pass | Chạy hai lệnh | ✅ `test` → `Test Files 3 passed (3)`, `Tests 11 passed (11)`; `test:e2e` → `Test Files 2 passed (2)`, `Tests 6 passed (6)`. Thêm: `pnpm --filter api lint` không lỗi, `tsc --noEmit` không lỗi |
+| AC-1.2-07 | `ValidationPipe` global: body có field lạ bị trả 400 theo định dạng lỗi chuẩn, `message` là mảng có tên field đó | e2e test trên controller test riêng | ✅ e2e `validation.e2e-spec.ts > rejects an unknown field with 400 and names it` (body `{ name, foo }` → `400`, `message` là mảng chứa `foo`, `requestId` trùng header); unit `keeps a validation message array as an array` |
 
 ## Sprint V1.3 — Database schema
 | ID | Tiêu chí |

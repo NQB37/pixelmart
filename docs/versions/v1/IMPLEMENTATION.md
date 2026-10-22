@@ -92,13 +92,188 @@ AC-1.1-01 … AC-1.1-07 trong [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md#sp
 
 ## Sprint V1.2 — NestJS API skeleton
 
-- **Mục tiêu:** cơ bản về HTTP/REST, NestJS module / controller / provider / dependency injection, request lifecycle (middleware → guard → pipe → handler → interceptor → filter), cấu hình với env validation, log có cấu trúc.
-- **Công việc:** scaffold `apps/api` bằng Nest 12 CLI. `ConfigModule` với env đã được validate (fail fast khi thiếu `DATABASE_URL`). `ValidationPipe` global (`whitelist`, `forbidNonWhitelisted`, `transform`). Exception filter global trả về đúng định dạng lỗi đã thống nhất. nestjs-pino với request ID. Swagger tại `/docs`. `GET /health` (phần kiểm tra DB có ở V1.3). Script gốc `pnpm dev:api`.
-- **File:** `apps/api/src/main.ts`, `app.module.ts`, `config/env.validation.ts`, `common/filters/http-exception.filter.ts`, `health/health.controller.ts`, `test/health.e2e-spec.ts`.
-- **Test:** unit test cho định dạng output của exception filter. e2e test `GET /health → 200`. e2e test cho thấy route không tồn tại trả về định dạng lỗi chuẩn với `404`.
-- **Kiểm chứng:** `curl -i localhost:4000/health`. Swagger UI tải được. Log là JSON có `reqId`. API từ chối khởi động khi thiếu env bắt buộc.
-- **Bài tập troubleshooting:** xoá một env var bắt buộc và đọc lỗi khi khởi động. Gọi một route không tồn tại và lần ra thành phần nào đã trả về 404.
-- **Docs:** tạo `docs/TESTING.md`, `docs/learning/http-and-rest.md`, `docs/learning/nestjs-fundamentals.md`.
+> Kế hoạch chi tiết, viết trước khi code. **Cập nhật 2026-10-21** để khớp với scaffold thực tế: Vitest thay Jest, zod để validate env, giữ oxlint và Prettier, dùng `apps/api/.env`. Các quyết định nằm ở mục 3a. Những việc còn lại sau lần review code nằm ở mục 3b. **Cập nhật 2026-10-22:** đã sửa xong các mục 3b (trừ câu hỏi ✋), AC-1.2-01…07 đã có bằng chứng.
+
+### 1. Mục tiêu học tập
+- Mô tả được request lifecycle của Nest (middleware → guard → interceptor → pipe → handler → interceptor; filter bắt lỗi ở mọi tầng) và chỉ ra chỗ nào đặt validation, chỗ nào đặt xử lý lỗi, vì sao.
+- Giải thích module / controller / provider và dependency injection; vì sao DI giúp test được mà không cần khởi động cả hệ thống.
+- Giải thích vì sao config phải được validate lúc khởi động (fail fast) thay vì để lỗi lộ ra ở request đầu tiên.
+- Đọc được một dòng log JSON và nối nó với đúng một request và đúng một response bằng request ID.
+
+### 2. Khái niệm và điều kiện tiên quyết
+Đọc trước khi code (ghi chú trong `docs/learning/`, viết ở đầu sprint này):
+- `http-and-rest.md`: HTTP method, status code 200/400/404/500, resource và REST.
+- `nestjs-fundamentals.md`: module, controller, provider, DI, request lifecycle.
+
+Theo [LEARNING.md](LEARNING.md), bạn phải giải thích được các khái niệm này bằng lời của mình (✋) **trước khi viết dòng code đầu tiên** của sprint. Điều kiện tiên quyết: `pnpm install` của V1.1 chạy được; Node 24.x; pnpm 12.11.2. V1.2 không cần Postgres chạy, vì DB chỉ được kiểm tra từ V1.3.
+
+### 3. Các bước triển khai
+Phiên bản thực tế trong `pnpm-lock.yaml` (kiểm tra ngày 2026-10-21, khớp với [ADR-0002](../../decisions/0002-tool-and-dependency-versions.md)): `@nestjs/core` 12.1.3, `@nestjs/cli` 12.0.8, `@nestjs/config` 12.0.1, `@nestjs/swagger` 12.0.2, `nestjs-pino` 5.3.1 (`pino` 10.4.0, `pino-http` 11.0.0), `pino-pretty` 13.2.0, `zod` 4.6.7, `class-validator` 0.15.1, `vitest` 4.1.12 (`vite` 8.3.4), `supertest` 7.3.1, `oxlint` 1.88.0, `prettier` 3.9.10, `typescript` 6.0.3.
+
+Đánh dấu: ✅ đã có trong code và đúng kế hoạch; 🟡 đã có nhưng cần sửa (chi tiết ở 3b); ⬜ chưa làm.
+
+0. ✅/⬜ **Trước khi code:** hai file `docs/learning/http-and-rest.md` và `docs/learning/nestjs-fundamentals.md` đã viết xong. Các câu ✋ ở mục 9 vẫn chưa được trả lời.
+1. ✅ **Scaffold `apps/api`:** dùng Nest CLI 12 trong thư mục tạm **ngoài repo**, rồi chuyển vào `apps/api`. Bỏ `.git`, `node_modules`, lockfile và `.gitignore` của template, vì repo đã có các file này ở thư mục gốc. Đặt `"name": "api"` và `"private": true` để khớp với `pnpm --filter api`. Template 12 có sẵn Vitest, oxlint và Prettier (xem 3a).
+   - Lệnh generator (`nest g module …`) phải chạy **bên trong `apps/api`**, hoặc dùng `pnpm --filter api exec nest g …`. Nếu chạy ở gốc repo, Nest CLI không thấy `nest-cli.json` nên sẽ tạo file vào `src/` ở gốc. ✅ Thư mục `src/` thừa ở gốc (sinh ra theo cách đó) đã được xoá.
+2. ✅ **Không đặt `"type": "module"` trong `apps/api/package.json`.** Nest biên dịch ra CJS. Root có `"type": "module"`, nhưng Node dùng `package.json` gần nhất để quyết định, nên file trong `apps/api` vẫn là CJS.
+   - ✅ Hệ quả: Vite cảnh báo khi đọc `vitest.config.ts` viết bằng cú pháp ESM trong một package CJS. Đã sửa bằng cách đổi tên thành `vitest.config.mts` và `vitest.config.e2e.mts`, và cập nhật script `test:e2e`.
+3. ✅ **Dependency:** `@nestjs/config @nestjs/swagger nestjs-pino pino-http class-validator class-transformer zod`; dev: `pino-pretty`. pnpm lưu dạng `^`, lockfile ghim phiên bản thật. ADR-0002 chỉ yêu cầu ghim exact cho Prisma. Đã gỡ `jest`, vì project dùng Vitest.
+4. ✅ **Env validation** (`src/config/env.schema.ts`, zod):
+   - `DATABASE_URL`: bắt buộc, `z.string().startsWith('postgresql://')`. Chuỗi rỗng phải bị từ chối. Chưa dùng ở V1.2, nhưng khai báo ngay để V1.3 không phải sửa.
+   - `PORT`: `z.coerce.number().int().positive().default(4000)`. Thiếu `.default` thì khi không có biến, `Number(undefined)` thành `NaN` và bị báo lỗi.
+   - `NODE_ENV`: `development | test | production`, mặc định `development`.
+   - `LOG_LEVEL`: `trace | debug | info | warn | error | fatal`, mặc định `info`.
+   - Export `type Env = z.infer<typeof envSchema>` và một hàm `validateEnv(config)`: gọi `safeParse`; nếu thất bại thì `throw new Error('Invalid environment variables:\n' + z.prettifyError(result.error))`. zod tự gom **mọi** lỗi, không dừng ở biến đầu tiên. Tách thành hàm riêng để unit test gọi trực tiếp.
+   - `ConfigModule.forRoot({ isGlobal: true, validate: validateEnv, envFilePath: '.env' })`. Đường dẫn tương đối tính theo cwd. `pnpm --filter api …` chạy script với cwd là `apps/api`, nên file được đọc là `apps/api/.env`.
+   - `ConfigModule` **không ghi đè** biến đã có trong `process.env`. Biến trong shell thắng biến trong `.env`.
+5. ✅ **`apps/api/.env.example`:** `DATABASE_URL=postgresql://pixelmart:pixelmart_dev_password@localhost:5432/pixelmart`, `PORT=4000`, `NODE_ENV=development`, `LOG_LEVEL=info`. `.env.example` ở gốc giữ nguyên, chỉ chứa biến `POSTGRES_*` cho Compose. User, password và port trong `DATABASE_URL` phải khớp với `.env` ở gốc.
+6. ✅ **Cấu hình app dùng chung** (`src/app.setup.ts`, hàm `configureApp(app)`): hiện chứa Swagger. `main.ts` và e2e test **cùng gọi `configureApp`**, để test không chạy một cấu hình khác production.
+7. ✅ **Global pipe và filter đăng ký bằng provider** (`APP_PIPE`, `APP_FILTER`) trong `AppModule`: `ValidationPipe({ whitelist, forbidNonWhitelisted, transform })` và `HttpExceptionFilter`. Đăng ký kiểu này thì sau này inject được service, và e2e dựng từ `AppModule` cũng tự có chúng.
+8. ✅ **Exception filter** (`src/common/filters/http-exception.filter.ts`): `@Catch()` bắt **mọi** exception, không chỉ `HttpException`. Định dạng thống nhất:
+   ```json
+   {
+     "statusCode": 404,
+     "error": "Not Found",
+     "message": "Cannot GET /khong-co",
+     "path": "/khong-co",
+     "requestId": "3f2a…",
+     "timestamp": "2026-10-16T08:00:00.000Z"
+   }
+   ```
+   - Với `HttpException`, đọc nội dung từ **`exception.getResponse()`**, không lấy `exception.message`. Kết quả có thể là chuỗi, hoặc object `{ message, error, statusCode }`. Với lỗi của `ValidationPipe`, `message` là **mảng chuỗi** (ví dụ `["property foo should not exist"]`), còn `exception.message` chỉ là `"Bad Request Exception"`.
+   - Nếu không có `error` thì dùng reason phrase của status, ví dụ `STATUS_CODES[status]` từ module `node:http`.
+   - Lỗi không phải `HttpException` → `500`, `error: "Internal Server Error"`, `message: "Internal server error"`. Không đưa stack ra response. Ghi stack vào log ở mức `error` bằng `new Logger(HttpExceptionFilter.name)` từ `@nestjs/common`; sau bước 9, log này đi qua pino.
+   - `requestId` lấy từ `request.id`, do pino-http gán.
+9. ✅ **Request ID và logging** (`LoggerModule.forRootAsync` trong `AppModule`):
+   - `pinoHttp.genReqId(req, res)`: dùng header `x-request-id` nếu client gửi chuỗi không rỗng dài tối đa 128 ký tự, nếu không thì `randomUUID()` (từ `node:crypto`). Luôn `res.setHeader('x-request-id', id)` rồi trả `id`. Giới hạn độ dài để client không nhồi được chuỗi tuỳ ý vào log. Mặc định pino-http chỉ đánh số tăng dần 1, 2, 3…, không đọc header.
+   - `transport: pino-pretty` **chỉ khi `NODE_ENV === 'development'`**. `test` và `production` ghi JSON thuần. Vitest tự đặt `NODE_ENV=test`.
+   - **Tên trường request ID trong JSON** là `req.id` (đã xác minh bằng output thật ngày 2026-10-22: `"req":{"id":"test-123","method":"GET",…}`).
+10. ✅ **`main.ts`:**
+    - `NestFactory.create(AppModule, { bufferLogs: true })`, rồi `app.useLogger(app.get(Logger))` với `Logger` từ `nestjs-pino`. Thiếu bước này thì log của Nest (khởi động, route mapping) không đi qua pino.
+    - Port lấy từ `app.get(ConfigService<Env, true>).get('PORT', { infer: true })`, không đọc `process.env.PORT ?? 3000`. Như vậy giá trị đã validate và mặc định 4000 mới có tác dụng.
+    - `app.enableShutdownHooks()` ✅.
+    - Gọi `void bootstrap();`. Rule `no-floating-promises` của oxlint báo lỗi nếu Promise bị bỏ lơ.
+11. ✅ **Health** (`src/modules/health/`): `GET /health` → `200 { "status": "ok", "uptime": <giây>, "timestamp": "…" }`. Không kiểm tra DB ở bước này; phần đó thuộc V1.3.
+12. ✅ **Swagger:** `DocumentBuilder` với title `PixelMart API`, version `1.0`; UI tại `/docs`.
+13. ✅ **Scripts trong `apps/api/package.json`:** `build`, `dev` (`nest start --watch`), `dev:debug`, `dev:prod` (`node dist/main`), `lint` (oxlint), `format` (Prettier), `test` (`vitest run`), `test:watch`, `test:cov`, `test:e2e` (`vitest run --config ./vitest.config.e2e.mts`). Bỏ `deploy`, vì project không dùng `nest deploy`.
+14. ✅ **Scripts gốc:** thêm `"dev:api": "pnpm --filter api dev"`.
+15. ✅ **Docs:** `docs/TESTING.md` đã tạo ngày 2026-10-21. Ngày 2026-10-22 đã cập nhật `README.md` (tạo `apps/api/.env`, chạy `pnpm dev:api`), bảng lệnh trong `docs/DEVELOPMENT.md` và `apps/api/README.md`.
+
+**Cấu trúc file:**
+
+| File | Trách nhiệm |
+|---|---|
+| `apps/api/package.json`, `tsconfig.json`, `tsconfig.build.json`, `nest-cli.json` | Cấu hình package và build (CJS). |
+| `apps/api/vitest.config.mts`, `vitest.config.e2e.mts` | Cấu hình Vitest cho unit (`**/*.spec.ts`) và e2e (`**/*.e2e-spec.ts`). |
+| `apps/api/.oxlintrc.json`, `.prettierrc` | Lint và format (giữ từ template, xem 3a). |
+| `apps/api/src/main.ts` | Khởi động app: logger pino, `configureApp`, shutdown hooks, port từ `ConfigService`. |
+| `apps/api/src/app.module.ts` | Ghép ConfigModule, LoggerModule, HealthModule; đăng ký `APP_PIPE`, `APP_FILTER`. |
+| `apps/api/src/app.setup.ts` | `configureApp(app)`: Swagger và các cấu hình dùng chung giữa `main.ts` và e2e. |
+| `apps/api/src/config/env.schema.ts` | Schema zod, type `Env`, hàm `validateEnv`. |
+| `apps/api/src/common/filters/http-exception.filter.ts` | Định dạng lỗi thống nhất. |
+| `apps/api/src/modules/health/health.controller.ts`, `health.module.ts` | `GET /health`. |
+| `apps/api/src/**/*.spec.ts` | Unit test (đặt cạnh file nguồn). |
+| `apps/api/test/app.e2e-spec.ts`, `test/validation.e2e-spec.ts` | e2e test. |
+| `apps/api/.env.example` | `DATABASE_URL`, `PORT`, `NODE_ENV`, `LOG_LEVEL` với giá trị giả. |
+| `package.json` (gốc) | Thêm `dev:api`. |
+| `docs/TESTING.md`, `docs/learning/http-and-rest.md`, `docs/learning/nestjs-fundamentals.md` | Tài liệu của sprint. |
+
+Quy ước thư mục: feature module nằm trong `src/modules/<tên>/`; phần dùng chung nằm trong `src/common/` và `src/config/`.
+
+#### 3a. Quyết định đã chốt (cập nhật 2026-10-21)
+
+- **`DATABASE_URL` bắt buộc ngay ở V1.2**, dù chưa dùng. Lý do: AC-1.2-02 cần một biến bắt buộc thật để kiểm chứng; và V1.3 chỉ việc dùng biến này.
+- **`apps/api` là CJS**, không phải ESM (xem bước 2).
+- **Vitest 4 thay Jest 30** để test API. Scaffold đã có sẵn Vitest; nó chạy TypeScript không cần ts-jest, nhanh hơn, và web (V1.6) sẽ dùng cùng runner. Đã ghi vào [ADR-0002](../../decisions/0002-tool-and-dependency-versions.md). Hệ quả: `tsconfig.json` có `types: ["vitest/globals"]`, và file config phải là `.mts`.
+- **zod cho env, class-validator cho DTO.** Env là một object phẳng gồm toàn chuỗi. zod vừa validate, vừa sinh type `Env` từ chính schema (`z.infer`), và gom mọi lỗi trong một lần. DTO vẫn dùng class-validator, vì `ValidationPipe` và Swagger đọc metadata của class. Cái giá phải trả: project dùng hai thư viện validation, mỗi cái cho một ranh giới riêng.
+- **Giữ oxlint và Prettier của template.** Quyết định này thay cho quyết định cũ "bỏ ESLint và Prettier". Template 12 dùng oxlint chứ không dùng ESLint: chạy nhanh, cấu hình nhỏ, và có rule `no-floating-promises`. Prettier đọc `.editorconfig`, nên không có hai bộ quy tắc mâu thuẫn. `pnpm --filter api lint` và `format` dùng được ngay, nhưng **chưa thuộc AC của V1.2**. Chúng trở thành bắt buộc khi có CI ở V5.
+- **Mỗi app có file `.env` riêng** (`apps/api/.env`), không đọc `../../.env`. Mỗi app sở hữu cấu hình của nó; `apps/web/.env` sẽ có từ V1.5, và không app nào phải đọc ngược lên thư mục cha. Hệ quả: thông tin Postgres xuất hiện ở hai nơi, là `POSTGRES_*` trong `.env` ở gốc (cho Compose) và `DATABASE_URL` trong `apps/api/.env`. Đổi password thì phải sửa cả hai. Rule `*.env` trong `.gitignore` đã bao phủ file mới.
+- **Filter bắt mọi exception** và **filter/pipe đăng ký qua provider**, để không phải viết lại khi thêm DI.
+- **AC-1.2-07** (`ValidationPipe` trả 400 đúng định dạng và từ chối field lạ) được giữ. Không có AC này thì `ValidationPipe` không được kiểm chứng ở sprint nào.
+
+#### 3b. Việc còn lại sau review code (2026-10-21)
+
+Kết quả review: `tsc --noEmit` không có lỗi. `pnpm --filter api test` pass, nhưng chỉ có 1 test (`should be defined`). `pnpm --filter api test:e2e` **fail**: test chờ `{ status: 'OK' }` còn API trả `{ status: 'ok', uptime, timestamp }`.
+
+| # | Việc | Bước | AC | Trạng thái (2026-10-22) |
+|---|---|---|---|---|
+| 1 | Filter đọc `getResponse()`, trả đủ `statusCode`, `error`, `message`, `path`, `requestId`, `timestamp`; log stack khi lỗi 500 | 8 | 03, 07 | ✅ Mảng `message` được giữ nguyên (trước đó bị `join(', ')`); tên lỗi lấy từ `STATUS_CODES` |
+| 2 | `genReqId` + header `x-request-id`; `pino-pretty` chỉ ở `development` | 9 | 03, 04 | ✅ |
+| 3 | `main.ts`: `bufferLogs` + `useLogger`, port từ `ConfigService`, `void bootstrap()` | 10 | 04 | ✅ |
+| 4 | Env: `PORT` có mặc định, `DATABASE_URL` phải có tiền tố `postgresql://`, `validateEnv` dùng `prettifyError` | 4 | 02 | ✅ |
+| 5 | Test theo mục 5: sửa e2e hiện có, thêm unit cho filter và env, thêm e2e validation | 5 | 06 | ✅ 11 unit test + 6 e2e test |
+| 6 | Dọn: xoá `src/` ở gốc repo, gỡ `jest`, bỏ script `deploy`, đổi config sang `.mts`, sửa `apps/api/.env.example`, thêm `dev:api` | 1–3, 5, 13–14 | — | ✅ |
+| 7 | Trả lời các câu ✋ ở mục 9 | 0 | — | ⬜ |
+| 8 | Sau kiểm chứng: README, DEVELOPMENT, bằng chứng trong ACCEPTANCE_CRITERIA, sprint log | 15 | tất cả | ✅ |
+
+### 4. File cần tạo
+Xem bảng ở mục 3. Chưa tạo: `Prisma`, `apps/web`, `packages/*`, các module của catalog.
+
+### 5. Test cần viết và chạy
+Runner là Vitest 4 (`globals: true`, nên dùng `describe`/`it`/`expect` không cần import). Quy ước chung nằm ở [TESTING.md](../../TESTING.md).
+
+- **Unit `src/common/filters/http-exception.filter.spec.ts`:** tạo `ArgumentsHost` giả bằng object (`switchToHttp().getRequest()/getResponse()`, với `status` và `json` là `vi.fn()`). Các trường hợp:
+  - `NotFoundException` → đúng shape, `statusCode: 404`.
+  - `BadRequestException` có mảng message → `message` vẫn là mảng.
+  - `Error` thường → `500`, không lộ message gốc.
+  - `requestId` lấy đúng từ `request.id`.
+- **Unit `src/config/env.schema.spec.ts`:** gọi thẳng `validateEnv`:
+  - thiếu `DATABASE_URL` → lỗi có tên biến;
+  - `DATABASE_URL=""` → lỗi;
+  - `PORT=abc` → lỗi;
+  - thiếu nhiều biến → lỗi liệt kê đủ tất cả;
+  - giá trị hợp lệ → `PORT` được ép thành số;
+  - không có `PORT` → `4000`.
+- **Unit `src/modules/health/health.controller.spec.ts`:** thay test `should be defined` bằng test kiểm tra `check()` trả `status: 'ok'` và `timestamp` là chuỗi ISO hợp lệ.
+- **e2e `test/app.e2e-spec.ts`:**
+  - `GET /health` → 200, `body.status === 'ok'`. Kiểm tra từng field, không so cả object, vì `timestamp` và `uptime` thay đổi.
+  - Response có header `x-request-id`.
+  - Gửi `x-request-id: test-123` → header trả về đúng `test-123`.
+  - `GET /khong-co` → 404 đúng shape, `body.requestId` khớp với header.
+- **e2e `test/validation.e2e-spec.ts`:** một controller test đặt ngay trong file spec (không đưa vào `AppModule`), với DTO dùng `class-validator`. Dựng bằng `Test.createTestingModule({ imports: [AppModule], controllers: [TestController] })`. Gửi body có field lạ → 400, `message` là mảng có tên field lạ (AC-1.2-07).
+- Toàn bộ e2e dựng app bằng `Test.createTestingModule` và gọi `configureApp`. Không cần Postgres chạy, nhưng `AppModule` validate env, nên `apps/api/.env` phải có `DATABASE_URL` hợp lệ.
+
+### 6. Kiểm tra thủ công
+| Bước | Lệnh | Kết quả mong đợi |
+|---|---|---|
+| Cài | `pnpm install` | Không lỗi. Nếu pnpm báo build script bị chặn, làm theo [TROUBLESHOOTING](TROUBLESHOOTING.md) và chỉ phê duyệt package bạn nhận ra. |
+| Env | `cp apps/api/.env.example apps/api/.env` | Có file `.env` cho API. |
+| Khởi động | `pnpm dev:api` | Log báo đã lắng nghe ở port 4000. Log khởi động của Nest cũng đi qua pino. |
+| Health | `curl -i localhost:4000/health` | `200`, JSON có `status: "ok"`, có header `x-request-id`. |
+| Request ID từ client | `curl -i -H "x-request-id: test-123" localhost:4000/health` | Header trả về `x-request-id: test-123`. |
+| 404 | `curl -i localhost:4000/khong-co` | `404`, đúng định dạng lỗi; `requestId` trong body khớp `x-request-id`. |
+| Log | Đọc log của các request trên | Mỗi request có một dòng log với cùng request ID. Chạy với `NODE_ENV=production` để thấy JSON thuần. |
+| Swagger | Mở `http://localhost:4000/docs` | Swagger UI tải được và liệt kê `/health`. |
+| Thiếu env | Comment `DATABASE_URL` trong `apps/api/.env` (nhớ khôi phục) và chắc chắn shell không có biến này, rồi chạy `pnpm dev:api` | Process thoát với mã khác 0, thông báo có `DATABASE_URL`. Khôi phục `.env` sau bước này. |
+
+Lỗi 500 không có route sẵn để gọi. Kiểm chứng bằng unit test của filter; **không thêm route debug vào app**.
+
+### 7. Acceptance criteria
+AC-1.2-01 … AC-1.2-07 trong [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md#sprint-v12--nestjs-api-skeleton).
+
+### 8. Bài tập troubleshooting
+1. **Thiếu `DATABASE_URL`:** xoá biến và đọc lỗi khi khởi động. Vì sao lỗi xuất hiện ngay lúc boot? Vì sao chạy `unset DATABASE_URL` trong shell **không đủ** để tái hiện lỗi? Ngược lại, vì sao nếu shell đang có `DATABASE_URL` thì xoá nó trong `.env` cũng không đủ? (Gợi ý: `ConfigModule` đọc `apps/api/.env` và không ghi đè `process.env`.)
+2. **Route không tồn tại:** gọi `/khong-co` và lần ra thành phần nào tạo ra 404: router của Nest, hay filter? Vì sao nó đi qua cùng một định dạng lỗi?
+3. **Port bị chiếm:** chạy `pnpm dev:api` hai lần cùng lúc, đọc lỗi `EADDRINUSE`. Sửa bằng `PORT` khác, và giải thích vì sao không cần đổi port của container.
+4. **Generator chạy sai thư mục** _(đã gặp)_: vì sao `nest g module health` chạy ở gốc repo lại tạo `src/modules/health` ở gốc, thay vì trong `apps/api`? (Gợi ý: Nest CLI đọc `nest-cli.json` ở cwd.)
+5. **Message lỗi validation bị mất:** khi filter dùng `exception.message`, body có field lạ trả về `"Bad Request Exception"`. Danh sách lỗi thật nằm ở đâu, và vì sao?
+
+### 9. Câu hỏi ôn tập (✋ trước khi code, ✅ sau khi xong)
+1. Vì sao validation nằm ở pipe (ranh giới hệ thống) chứ không nằm trong service?
+2. Vì sao filter phải bắt được cả `Error` thường, không chỉ `HttpException`?
+3. Request ID đến từ đâu, và vì sao phải trả nó về trong cả header lẫn body?
+4. Vì sao `ConfigService` đọc được `apps/api/.env` khi bạn chạy `pnpm dev:api` ở gốc repo? (Gợi ý: cwd của `pnpm --filter` và `envFilePath` tương đối.)
+5. Vì sao e2e test dùng chung `configureApp` với `main.ts`? Điều gì xảy ra nếu hai bên khác nhau?
+6. Vì sao env dùng zod còn DTO dùng class-validator? Nếu chỉ được chọn một thì bạn chọn cái nào, và mất gì?
+
+### 10. Checkpoint
+Commit theo nhóm có ý nghĩa, ví dụ:
+1. `docs: align V1.2 plan with Vitest, zod and per-app env`
+2. `feat(api): scaffold NestJS API with config validation`
+3. `feat(api): add error format, request ID and Swagger`
+4. `test(api): cover env validation, error filter and e2e`
+
+Cuối cùng cập nhật sprint log trong ROADMAP. Sau đó **dừng lại** và chờ bạn xác nhận AC-1.2-01…07 trước khi sang V1.3.
 
 ## Sprint V1.3 — Database schema with Prisma
 
