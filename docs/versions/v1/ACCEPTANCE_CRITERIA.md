@@ -26,15 +26,17 @@ Mỗi tiêu chí phải được **kiểm chứng bằng cách chạy thật**. 
 | AC-1.2-06 | `pnpm --filter api test` và `pnpm --filter api test:e2e` (Vitest) đều pass | Chạy hai lệnh | ✅ `test` → `Test Files 3 passed (3)`, `Tests 11 passed (11)`; `test:e2e` → `Test Files 2 passed (2)`, `Tests 6 passed (6)`. Thêm: `pnpm --filter api lint` không lỗi, `tsc --noEmit` không lỗi |
 | AC-1.2-07 | `ValidationPipe` global: body có field lạ bị trả 400 theo định dạng lỗi chuẩn, `message` là mảng có tên field đó | e2e test trên controller test riêng | ✅ e2e `validation.e2e-spec.ts > rejects an unknown field with 400 and names it` (body `{ name, foo }` → `400`, `message` là mảng chứa `foo`, `requestId` trùng header); unit `keeps a validation message array as an array` |
 
-## Sprint V1.3 — Database schema
-| ID | Tiêu chí |
-|---|---|
-| AC-1.3-01 | Migration áp dụng sạch sẽ lên một database trống |
-| AC-1.3-02 | Bảng, FK, unique constraint và index khớp với DATABASE.md |
-| AC-1.3-03 | Các cột tiền là `numeric(12,2)`; các cột thời gian là `timestamptz` |
-| AC-1.3-04 | CHECK constraint từ chối giá âm, số lượng ngoài khoảng 1–99 và `line_total` không khớp (được chứng minh bằng test) |
-| AC-1.3-05 | Seed là idempotent và tạo một admin có mật khẩu đã hash, không bao giờ lưu dạng plain text |
-| AC-1.3-06 | `/health` báo trạng thái DB và trả về mã khác 200 khi DB bị dừng |
+## Sprint V1.3 — Database schema with Prisma
+
+| ID | Tiêu chí | Cách kiểm chứng | Bằng chứng |
+|---|---|---|---|
+| AC-1.3-01 | Toàn bộ migration áp dụng sạch lên một database trống | `pnpm --filter api test:int`: `globalSetup` chạy `migrate reset --force` lên `pixelmart_test`; `migrations.int-spec.ts` thấy 2 migration đã xong. `pnpm db:migrate` trên DB dev báo không có drift | ⬜ |
+| AC-1.3-02 | Bảng, FK (kèm hành vi `ON DELETE`), unique constraint và index khớp DATABASE.md | `schema.int-spec.ts` (đọc `pg_constraint`, `pg_indexes`); `\d products`, `\di` trong psql | ⬜ |
+| AC-1.3-03 | Cột tiền là `numeric(12,2)`; cột thời gian là `timestamptz` | `schema.int-spec.ts` (đọc `information_schema.columns`); `\d products` | ⬜ |
+| AC-1.3-04 | **Database** (không phải code ứng dụng) từ chối giá âm, số lượng ngoài 1–99, `line_total` không khớp, tổng tiền âm và email có chữ hoa; mỗi lần từ chối đúng tên constraint | `constraints.int-spec.ts`: insert bằng SQL thuần, có ca đối chứng hợp lệ | ⬜ |
+| AC-1.3-05 | Seed là idempotent (chạy hai lần vẫn 4 danh mục, 24 sản phẩm trong đó 4 DRAFT, 1 admin) và mật khẩu admin được hash bằng argon2id, không bao giờ lưu dạng plain text. Seed từ chối chạy khi thiếu `SEED_ADMIN_EMAIL` hoặc `SEED_ADMIN_PASSWORD` | `seed.int-spec.ts`; `pnpm db:seed` hai lần rồi đếm; `SELECT left(password_hash, 10) FROM users;` | ⬜ |
+| AC-1.3-06 | `GET /health/ready` trả 200 kèm `checks.database: "up"` khi DB chạy, và 503 theo định dạng lỗi chuẩn (không lộ chi tiết DB) khi DB dừng. `GET /health` vẫn 200 khi DB dừng. API khởi động được khi DB dừng | `health.int-spec.ts`; unit test của `HealthController`; `pnpm db:down` rồi `curl -i` cả hai endpoint; e2e của V1.2 pass khi DB dừng | ⬜ |
+| AC-1.3-07 | Integration test chỉ chạy trên `pixelmart_test`; database dev không bị thay đổi, và test dừng trước khi reset nếu URL không trỏ tới `pixelmart_test` | Unit `test-database.spec.ts`; đếm `products` trên `pixelmart` trước và sau `test:int` | ⬜ |
 
 ## Sprint V1.4 — Catalog API
 | ID | Tiêu chí |
@@ -43,7 +45,7 @@ Mỗi tiêu chí phải được **kiểm chứng bằng cách chạy thật**. 
 | AC-1.4-02 | Pagination validate input (`page ≥ 1`, `1 ≤ pageSize ≤ 100`) và trả về tổng số đúng |
 | AC-1.4-03 | Lọc theo danh mục hoạt động; slug không tồn tại trả về 404 theo định dạng lỗi chuẩn |
 | AC-1.4-04 | Các trường tiền là chuỗi có hai chữ số thập phân |
-| AC-1.4-05 | Integration test chạy trên `pixelmart_test`, không bao giờ trên DB dev |
+| AC-1.4-05 | Integration test của catalog dùng hạ tầng `test:int` của V1.3 (chạy trên `pixelmart_test`, không bao giờ trên DB dev) |
 
 ## Sprint V1.5 — Storefront
 | ID | Tiêu chí |

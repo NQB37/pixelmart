@@ -2,7 +2,7 @@
 
 Mọi sprint đều theo cùng một khung 10 phần: mục tiêu → khái niệm → công việc → file → test → kiểm tra thủ công → acceptance → bài tập troubleshooting → câu hỏi ôn tập → checkpoint commit.
 
-Sprint V1.1 được viết đầy đủ chi tiết. Các sprint sau ở đây mới ở mức dàn ý và sẽ **được viết chi tiết khi bắt đầu từng sprint**, dựa trên những gì ta học được ở sprint trước.
+Sprint V1.1–V1.3 được viết đầy đủ chi tiết. Các sprint sau ở đây mới ở mức dàn ý và sẽ **được viết chi tiết khi bắt đầu từng sprint**, dựa trên những gì ta học được ở sprint trước.
 
 Quy tắc: ta **dừng lại ở cuối mỗi sprint**. Sprint tiếp theo chỉ bắt đầu sau khi acceptance criteria đã được kiểm chứng và bạn xác nhận.
 
@@ -277,12 +277,288 @@ Cuối cùng cập nhật sprint log trong ROADMAP. Sau đó **dừng lại** v�
 
 ## Sprint V1.3 — Database schema with Prisma
 
-- **Mục tiêu:** mô hình hoá quan hệ, PK/FK, unique constraint, index, migration như một lịch sử có version, ORM so với raw SQL, vì sao tiền không dùng float, seeding.
-- **Công việc:** cài `prisma@7.10.0`, `@prisma/client@7.10.0`, `@prisma/adapter-pg@7.10.0`. Tạo `prisma.config.ts` (file cấu hình của Prisma 7), `schema.prisma` với Category / Product / Order / OrderItem / User và các enum. Migration đầu tiên. Migration thứ hai tạo bằng `--create-only` chứa các CHECK constraint trong [DATABASE.md](../../DATABASE.md). `PrismaService` + `PrismaModule`. Seed idempotent (dùng upsert): 4 danh mục, ~24 sản phẩm (một số ở trạng thái DRAFT), 1 admin với mật khẩu đã hash lấy từ env. Health check giờ ping tới DB.
-- **Test:** migration test áp dụng toàn bộ migration lên `pixelmart_test` từ đầu. Constraint test cho thấy việc insert giá âm và `line_total` không khớp bị từ chối ở tầng **database**. Chạy seed hai lần cho ra cùng số lượng bản ghi.
-- **Kiểm chứng:** xem bảng trong psql (`\d products`). Mở Prisma Studio.
-- **Bài tập troubleshooting:** sửa một file migration đã được áp dụng và quan sát lỗi checksum/drift. Giải thích vì sao migration đã áp dụng là bất biến.
-- **Docs:** `docs/learning/relational-databases-and-postgresql.md`, `docs/learning/prisma-and-migrations.md`. Trạng thái của DATABASE.md → đã triển khai.
+> Kế hoạch chi tiết, viết ngày 2026-10-22, trước khi code. Các quyết định bạn đã chọn và các quyết định mình chọn thay bạn nằm ở mục 3a. Phiên bản thật của package sẽ được ghi vào mục 3 sau khi cài (giống V1.2).
+
+### 1. Mục tiêu học tập
+- Mô hình hoá được quan hệ bằng primary key, foreign key, unique constraint và CHECK constraint. Giải thích được mỗi hành vi `ON DELETE` (`RESTRICT`, `CASCADE`, `SET NULL`) bảo vệ điều gì trong PixelMart.
+- Giải thích vì sao migration là một **lịch sử có version và bất biến**, khác gì giữa `migrate dev`, `migrate deploy` và `migrate reset`, và vì sao không bao giờ sửa một migration đã áp dụng.
+- Giải thích vì sao tiền dùng `numeric(12,2)` và `Prisma.Decimal`, không dùng float hay `Number()`.
+- Giải thích vì sao bất biến (invariant) quan trọng phải được database thực thi, không chỉ code ứng dụng.
+- Phân biệt **liveness** và **readiness**, và vì sao API vẫn nên khởi động được khi DB đang dừng.
+- Viết được seed **idempotent** và giải thích vì sao chạy nó hai lần là an toàn.
+
+### 2. Khái niệm và điều kiện tiên quyết
+Đọc trước khi code (ghi chú trong `docs/learning/`, viết ở đầu sprint này):
+- [relational-databases-and-postgresql.md](../../learning/relational-databases-and-postgresql.md): bảng, khoá, quan hệ, constraint, index, kiểu dữ liệu.
+- [prisma-and-migrations.md](../../learning/prisma-and-migrations.md): Prisma schema, Prisma 7 (`prisma.config.ts`, generator, driver adapter), migration, seed.
+
+Theo [LEARNING.md](LEARNING.md), bạn phải trả lời được các câu ✋ ở mục 9 **trước khi viết dòng code đầu tiên**. Điều kiện tiên quyết: V1.2 đã xác nhận; `pnpm db:up` chạy được và cả `pixelmart` lẫn `pixelmart_test` đều tồn tại (AC-1.1-05); Docker Desktop **đang chạy**.
+
+### 3. Các bước triển khai
+Phiên bản dự kiến (theo [ADR-0002](../../decisions/0002-tool-and-dependency-versions.md)): `prisma`, `@prisma/client`, `@prisma/adapter-pg` **đúng 7.10.0**. `argon2`, `tsx`, `dotenv`: bản stable mới nhất, ghi phiên bản thật từ `pnpm-lock.yaml` vào đây sau khi cài.
+
+Đánh dấu: ✅ đã có trong code và đúng kế hoạch; 🟡 đã có nhưng cần sửa; ⬜ chưa làm.
+
+0. ⬜ **Trước khi code:** đọc hai ghi chú học ở mục 2 và trả lời các câu ✋ ở mục 9.
+1. ⬜ **Dọn `allowBuilds` trong `pnpm-workspace.yaml`** (tech debt từ V1.2). Mục `all: true` là một package tên `all` hay là cờ cho phép mọi build script? Tra tài liệu pnpm 12, xoá nếu không cần, và ghi kết luận vào đây. Phải làm **trước** bước 2: nếu mọi build script đều được phép thì bước phê duyệt `argon2` sẽ không xảy ra và bạn mất bài học về supply chain.
+2. ⬜ **Cài dependency** (chạy ở gốc repo):
+   ```sh
+   pnpm --filter api add --save-exact @prisma/client@7.10.0 @prisma/adapter-pg@7.10.0
+   pnpm --filter api add argon2
+   pnpm --filter api add -D --save-exact prisma@7.10.0
+   pnpm --filter api add -D tsx dotenv
+   ```
+   - **Luôn ghi phiên bản cho Prisma.** Thiếu `@7.10.0` thì `prisma` có thể cài ra bản `8.0.0-rc.x` ([ADR-0002](../../decisions/0002-tool-and-dependency-versions.md)). Kiểm tra lại bằng `pnpm --filter api exec prisma --version`: CLI và client phải cùng `7.10.0`.
+   - pnpm sẽ báo các package có build script bị chặn (dự kiến `argon2`, có thể thêm package của Prisma). Đọc danh sách, chỉ phê duyệt package bạn nhận ra, commit thay đổi trong `pnpm-workspace.yaml`. **Ghi danh sách thật vào đây.**
+   - `argon2` là dependency chính (không phải dev) vì V1.8 dùng nó để kiểm tra mật khẩu lúc đăng nhập.
+3. ⬜ **`apps/api/prisma.config.ts`:**
+   ```ts
+   import 'dotenv/config';
+   import { defineConfig, env } from 'prisma/config';
+
+   export default defineConfig({
+     schema: 'prisma/schema.prisma',
+     migrations: {
+       path: 'prisma/migrations',
+       seed: 'tsx prisma/seed.ts',
+     },
+     datasource: {
+       url: env('DATABASE_URL'),
+     },
+   });
+   ```
+   - Prisma 7 **không tự đọc `.env`**. `dotenv/config` đọc `.env` theo cwd; `pnpm --filter api exec …` chạy với cwd là `apps/api`, nên file được đọc là `apps/api/.env`, giống API.
+   - dotenv **không ghi đè** biến đã có trong `process.env`. Đây là điều mà bước 12 dựa vào: test truyền `DATABASE_URL` của `pixelmart_test` qua env, và dotenv không được thay nó bằng URL của DB dev.
+   - `env('DATABASE_URL')` báo lỗi ngay khi thiếu biến, kể cả với `prisma generate` (lệnh không kết nối DB). Vì vậy phải tạo `apps/api/.env` trước khi generate.
+4. ⬜ **`apps/api/prisma/schema.prisma`** theo [DATABASE.md](../../DATABASE.md):
+   - Generator:
+     ```prisma
+     generator client {
+       provider     = "prisma-client"
+       output       = "../src/generated/prisma"
+       moduleFormat = "cjs"
+     }
+
+     datasource db {
+       provider = "postgresql"
+     }
+     ```
+     `prisma-client` là generator mặc định của Prisma 7, `output` là bắt buộc, và client không còn nằm trong `node_modules`. `moduleFormat = "cjs"` vì `apps/api` là CJS (V1.2, bước 2). Đặt output trong `src/` để `nest build` biên dịch nó cùng app. URL không nằm trong schema mà nằm trong `prisma.config.ts`.
+   - Model `Category`, `Product`, `Order`, `OrderItem`, `User`; enum `ProductStatus` (`DRAFT`, `PUBLISHED`), `OrderStatus` (`PENDING`, `CONFIRMED`, `SHIPPED`, `DELIVERED`, `CANCELLED`), `UserRole` (`ADMIN`, `CUSTOMER`).
+   - Tên trong code là PascalCase/camelCase, tên trong DB là snake_case: `@@map("products")`, `@map("created_at")`, enum `@@map("product_status")`.
+   - **Kiểu dữ liệu phải ghi rõ**, vì mặc định của Prisma không khớp thiết kế:
+     - ID: `String @id @default(dbgenerated("uuidv7()")) @db.Uuid`. PostgreSQL 18 có sẵn hàm `uuidv7()` (xem 3a).
+     - Tiền: `Decimal @db.Decimal(12, 2)`.
+     - Thời gian: `DateTime @db.Timestamptz(3)`. Nếu chỉ ghi `DateTime`, Prisma tạo `timestamp(3)` **không có múi giờ**, sai AC-1.3-03.
+     - `createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)` và `updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)`. `@updatedAt` chỉ do Prisma Client cập nhật; `@default(now())` cho phép insert bằng SQL thuần (test ở bước 13) không phải tự điền `updated_at`.
+     - Độ dài chuỗi theo bảng "Độ dài cột" trong DATABASE.md (`@db.VarChar(n)`, `@db.Char(3)`, `@db.Text`).
+   - Quan hệ: `Product.category` với `onDelete: Restrict`; `OrderItem.order` với `onDelete: Cascade`; `OrderItem.product` nullable với `onDelete: SetNull`.
+   - Unique và index đúng bảng "Index (V1)" trong DATABASE.md, gồm `@@unique([orderId, productId])` và `@@index([status, createdAt(sort: Desc)])`.
+5. ⬜ **Migration đầu tiên:** `pnpm db:migrate --name init`. Mở `prisma/migrations/<timestamp>_init/migration.sql` và **đọc từng câu lệnh**: bảng, enum, FK kèm `ON DELETE`, index. Đối chiếu với DATABASE.md trước khi đi tiếp. `migrate dev` cần tạo một shadow database tạm; user `pixelmart` là superuser của container nên làm được.
+6. ⬜ **Migration thứ hai, viết tay:** `pnpm db:migrate --create-only --name add_check_constraints`. Prisma tạo một file rỗng; dán các câu `ALTER TABLE … ADD CONSTRAINT … CHECK` từ mục "Các constraint mà Prisma schema không diễn đạt được" trong DATABASE.md vào. Sau đó chạy `pnpm db:migrate` (không có `--create-only`) để áp dụng. Từ giây phút này, **cả hai file migration là bất biến** (bài tập 8.1).
+7. ⬜ **Generate client:** `pnpm db:generate`. Từ Prisma 7, `migrate dev` không còn tự chạy `generate`. Thêm `apps/api/src/generated/` vào `.gitignore`, vào `ignorePatterns` của `apps/api/.oxlintrc.json` và vào một file `apps/api/.prettierignore` mới: code sinh ra không được commit, lint hay format.
+8. ⬜ **`PrismaService` + `PrismaModule`** (`src/database/`):
+   ```ts
+   @Injectable()
+   export class PrismaService extends PrismaClient implements OnModuleDestroy {
+     constructor(config: ConfigService<Env, true>) {
+       super({
+         adapter: new PrismaPg({
+           connectionString: config.get('DATABASE_URL', { infer: true }),
+         }),
+       });
+     }
+
+     async onModuleDestroy() {
+       await this.$disconnect();
+     }
+   }
+   ```
+   - Import `PrismaClient` từ `../generated/prisma/client`. Prisma 7 bắt buộc có driver adapter; `new PrismaClient()` không có adapter sẽ báo lỗi.
+   - **Không gọi `$connect()` trong `onModuleInit`.** Adapter kết nối khi có query đầu tiên. Nhờ vậy API vẫn khởi động khi DB dừng, `/health` vẫn trả 200 và `/health/ready` báo 503 (bước 9). e2e test của V1.2 vẫn chạy không cần Postgres.
+   - `PrismaModule` khai báo và export `PrismaService`. Module nào cần DB thì tự `imports: [PrismaModule]` (không dùng `@Global()`, xem 3a). `app.enableShutdownHooks()` có từ V1.2 nên `onModuleDestroy` được gọi khi tắt app.
+9. ⬜ **Readiness** (`src/modules/health/`):
+   - `GET /health` **giữ nguyên** như V1.2 (liveness: process còn sống, không chạm DB).
+   - `GET /health/ready` chạy `SELECT 1` qua `prisma.$queryRaw`, đua với một timeout 1000 ms (`READINESS_TIMEOUT_MS`):
+     - DB trả lời → `200 { "status": "ok", "checks": { "database": "up" } }`.
+     - Lỗi hoặc quá thời gian → throw `ServiceUnavailableException('Database is not reachable')`. Filter của V1.2 biến nó thành **định dạng lỗi chuẩn** với `statusCode: 503`. Lỗi gốc được log ở mức `warn`, không đưa ra response (có thể chứa host hoặc user DB).
+   - `HealthModule` import `PrismaModule`.
+10. ⬜ **Seed** (`src/database/seed/`):
+    - `seed-data.ts`: 4 danh mục và 24 sản phẩm ở bảng "Dữ liệu seed" bên dưới. Tiền viết dạng **chuỗi** (`'49.99'`) để Prisma chuyển thành `Decimal`, không đi qua float.
+    - `seed.ts` export `seed(prisma, { adminEmail, adminPassword })`:
+      - Danh mục `upsert` theo `slug`, sản phẩm `upsert` theo `slug`, `update` dùng chính dữ liệu seed. Chạy lại thì catalog trở về đúng dữ liệu seed, không sinh bản ghi mới.
+      - Admin `upsert` theo email (đã `toLowerCase()`), `create` với `passwordHash: await argon2.hash(password, { type: argon2.argon2id })`, `role: 'ADMIN'`. `update: {}`: chạy lại không đổi mật khẩu đã có (xem 3a).
+      - Trả về số bản ghi đã xử lý để log.
+    - `apps/api/prisma/seed.ts` là entry mỏng: đọc `SEED_ADMIN_EMAIL` và `SEED_ADMIN_PASSWORD` bằng một schema zod nhỏ (email hợp lệ, mật khẩu ≥ 12 ký tự, **không có giá trị mặc định**), tạo `PrismaClient` với adapter, gọi `seed`, rồi `$disconnect()` trong `finally`. Thiếu biến → thoát với mã khác 0 và in tên biến.
+    - Hai biến này **không** thêm vào `envSchema` của API, vì API không dùng chúng.
+    - Chạy bằng `pnpm db:seed` (`prisma db seed`). Prisma 7 không tự seed sau `migrate dev` hay `migrate reset`.
+11. ⬜ **Env:** thêm vào `apps/api/.env.example`: `SEED_ADMIN_EMAIL=admin@pixelmart.local` và `SEED_ADMIN_PASSWORD=change-me-dev-only`. Copy sang `apps/api/.env` của bạn.
+12. ⬜ **Cấu hình integration test:**
+    - `apps/api/vitest.config.int.mts`: `include: ['test/integration/**/*.int-spec.ts']`, `globalSetup: ['test/integration/global-setup.ts']`, `fileParallelism: false` (mọi file dùng chung một DB), `hookTimeout` và `testTimeout` 30 giây.
+    - `test/integration/test-database.ts` export `testDatabaseUrl(devUrl)`: lấy `DATABASE_URL`, đổi `pathname` thành `/pixelmart_test`, và **throw** nếu kết quả không trỏ tới `pixelmart_test`. Test DB được suy ra từ URL dev, nên không phải lặp lại user và password ở file thứ ba.
+    - Trong `vitest.config.int.mts`: `import 'dotenv/config'`, tính URL test, đặt vào `test.env.DATABASE_URL` để mọi test (và `AppModule` dựng trong test) dùng `pixelmart_test`. `ConfigModule` không ghi đè `process.env`, nên giá trị này thắng `apps/api/.env`.
+    - `global-setup.ts`: chạy `pnpm exec prisma migrate reset --force` bằng `execSync` với `env: { ...process.env, DATABASE_URL: <url test> }`, `stdio: 'inherit'`. Mỗi lần chạy bắt đầu từ một DB trống đã áp đủ migration. Đây cũng chính là bằng chứng cho AC-1.3-01.
+    - Script `test:int` trong `apps/api/package.json`: `vitest run --config ./vitest.config.int.mts`.
+13. ⬜ **Integration test** (chi tiết ở mục 5).
+14. ⬜ **Scripts gốc:** `db:generate` (`pnpm --filter api exec prisma generate`), `db:migrate` (`… prisma migrate dev`), `db:seed` (`… prisma db seed`), `db:studio` (`… prisma studio`). Tham số thêm được nối vào cuối: `pnpm db:migrate --name init`.
+15. ⬜ **Docs sau kiểm chứng:** `README.md` (Bắt đầu đến V1.3: copy env, `db:migrate`, `db:generate`, `db:seed`), bảng lệnh trong `docs/DEVELOPMENT.md`, `docs/TESTING.md` (integration test đã chạy thật), trạng thái `docs/DATABASE.md` → đã triển khai, `docs/ARCHITECTURE.md`, bằng chứng trong ACCEPTANCE_CRITERIA, sprint log.
+
+**Dữ liệu seed** (giá EUR; tên sản phẩm tiếng Anh vì storefront chưa có kế hoạch đa ngôn ngữ):
+
+| Danh mục (`slug`) | Sản phẩm | Giá | Trạng thái |
+|---|---|---|---|
+| Keyboards (`keyboards`) | Aurora 75 Mechanical Keyboard | 129.00 | PUBLISHED |
+| | Nimbus TKL Wireless Keyboard | 99.90 | PUBLISHED |
+| | Pixel 60 Compact Keyboard | 79.50 | PUBLISHED |
+| | Studio Low-Profile Keyboard | 69.99 | PUBLISHED |
+| | PBT Keycap Set Cream | 34.90 | PUBLISHED |
+| | Retro Typewriter Keyboard | 149.00 | **DRAFT** |
+| Mice (`mice`) | Glide Pro Wireless Mouse | 59.99 | PUBLISHED |
+| | Featherweight Gaming Mouse | 49.00 | PUBLISHED |
+| | Vertical Ergo Mouse | 39.90 | PUBLISHED |
+| | Travel Mini Mouse | 19.99 | PUBLISHED |
+| | Mouse Cable Bungee | 12.90 | PUBLISHED |
+| | Precision Trackball | 89.00 | **DRAFT** |
+| Headphones (`headphones`) | Echo ANC Over-Ear Headphones | 199.00 | PUBLISHED |
+| | Pulse True Wireless Earbuds | 89.99 | PUBLISHED |
+| | Studio Monitor Headphones | 149.50 | PUBLISHED |
+| | Arena 7.1 Gaming Headset | 79.00 | PUBLISHED |
+| | Kids Volume-Limited Headphones | 29.99 | PUBLISHED |
+| | Bone Conduction Headphones | 119.00 | **DRAFT** |
+| Accessories (`accessories`) | XL Desk Mat | 24.50 | PUBLISHED |
+| | USB-C 7-in-1 Hub | 44.90 | PUBLISHED |
+| | Aluminium Laptop Stand | 39.00 | PUBLISHED |
+| | Braided USB-C Cable 2 m | 9.99 | PUBLISHED |
+| | PixelMart Sticker Pack | 0.00 | PUBLISHED |
+| | 1080p Webcam | 54.00 | **DRAFT** |
+
+- Tổng: 4 danh mục, 24 sản phẩm (20 PUBLISHED, 4 DRAFT), 1 admin. V1.4 dựa vào các con số này để test pagination và việc ẩn DRAFT.
+- `slug` là tên viết thường nối bằng `-` (ví dụ `aurora-75-mechanical-keyboard`).
+- `imageUrl`: `https://placehold.co/600x600/png?text=<tên sản phẩm>` (dùng `/png` vì `next/image` mặc định chặn SVG). **Ngoại lệ có chủ đích:** `Braided USB-C Cable 2 m` không có `description` và `imageUrl` (`null`), để V1.5 có dữ liệu cho trạng thái thiếu ảnh.
+- `PixelMart Sticker Pack` giá `0.00`: hợp lệ với CHECK `price >= 0`, dùng làm ca biên cho V1.7.
+
+**Cấu trúc file:**
+
+| File | Trách nhiệm |
+|---|---|
+| `apps/api/prisma.config.ts` | Cấu hình Prisma CLI: đường dẫn schema và migration, lệnh seed, URL DB từ `apps/api/.env`. |
+| `apps/api/prisma/schema.prisma` | Model, enum, quan hệ, index. Source of truth cho cấu trúc mà Prisma diễn đạt được. |
+| `apps/api/prisma/migrations/*_init/migration.sql` | Migration sinh từ schema. Bất biến sau khi áp dụng. |
+| `apps/api/prisma/migrations/*_add_check_constraints/migration.sql` | CHECK constraint viết tay. Bất biến sau khi áp dụng. |
+| `apps/api/prisma/migrations/migration_lock.toml` | Prisma tạo, ghi provider. Commit. |
+| `apps/api/prisma/seed.ts` | Entry của `prisma db seed`: đọc env, tạo client, gọi `seed`. |
+| `apps/api/src/generated/prisma/` | Prisma Client sinh ra. **Không commit.** |
+| `apps/api/src/database/prisma.service.ts`, `prisma.module.ts` | `PrismaClient` với adapter pg, đóng kết nối khi tắt app. |
+| `apps/api/src/database/seed/seed.ts`, `seed-data.ts` | Logic seed idempotent và dữ liệu seed. Test gọi thẳng `seed()`. |
+| `apps/api/src/modules/health/health.controller.ts`, `health.module.ts` | Thêm `GET /health/ready`. |
+| `apps/api/vitest.config.int.mts` | Cấu hình integration test, đặt `DATABASE_URL` của `pixelmart_test`. |
+| `apps/api/test/integration/test-database.ts`, `global-setup.ts` | Suy ra URL test có chốt an toàn; reset DB test trước mỗi lần chạy. |
+| `apps/api/test/integration/*.int-spec.ts` | Integration test (mục 5). |
+| `apps/api/.env.example` | Thêm `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`. |
+| `apps/api/.oxlintrc.json`, `apps/api/.prettierignore`, `.gitignore` | Bỏ qua `src/generated/`. |
+| `package.json` (gốc) | `db:generate`, `db:migrate`, `db:seed`, `db:studio`. |
+| `pnpm-workspace.yaml` | `allowBuilds` đã rà lại, có `argon2`. |
+
+Quy ước thư mục: phần hạ tầng dùng chung (DB) nằm ở `src/database/`, cạnh `src/common/` và `src/config/`.
+
+#### 3a. Quyết định đã chốt (2026-10-22)
+
+Bạn đã chọn:
+- **Đồ công nghệ, giá EUR.** EUR có hai chữ số thập phân, khớp `numeric(12,2)` và Stripe (V3) mà không phải đổi gì ở [ADR-0003](../../decisions/0003-money-representation.md). Đã ghi vào ADR đó.
+- **Tách liveness và readiness.** `/health` trả lời "process còn sống không", `/health/ready` trả lời "có phục vụ được request không". Nếu gộp làm một, DB chậm một lúc sẽ làm process bị coi là chết và bị khởi động lại vô ích. Đây cũng chính là hai loại probe Kubernetes dùng ở V16. AC-1.3-06 được viết lại theo hướng này. Tự viết thay vì dùng `@nestjs/terminus` để thấy rõ cơ chế và giữ nguyên shape của AC-1.2-01.
+- **`globalSetup` tự reset `pixelmart_test`.** Mỗi lần chạy bắt đầu từ trống, không có bước chuẩn bị nào để quên. Đổi lại chậm thêm vài giây. Testcontainers bị loại: thêm dependency và làm `pixelmart_test` của V1.1 thành thừa.
+- **Ảnh placeholder** (`placehold.co`): luôn có, không lo bản quyền, V1.5 chỉ cần khai báo một host trong `images.remotePatterns`. Ảnh thật để V8 (R2).
+- **`argon2`** (argon2id) cho mật khẩu admin, khớp V1.8. Cái giá: native build script phải được phê duyệt.
+
+Mình chọn (bạn xem lại khi đọc plan):
+- **UUIDv7 sinh trong database** (`dbgenerated("uuidv7()")`) thay cho `@default(uuid(7))` sinh trong Prisma Client như DATABASE.md ghi trước đây. Lý do: PostgreSQL 18 có sẵn `uuidv7()`; mọi đường insert (Prisma, SQL thuần trong test, psql, tool khác sau này) đều có ID mà không phải tự sinh. Database là source of truth cho giá trị mặc định. DATABASE.md đã cập nhật.
+- **`PrismaModule` không `@Global()`.** Mỗi module tự import cái nó cần, nên đọc `imports` là thấy module nào chạm DB. Đổi lại, mỗi module thêm một dòng import.
+- **Không `$connect()` lúc khởi động** (bước 8), để liveness không phụ thuộc DB.
+- **Readiness dùng định dạng lỗi chuẩn** khi trả 503, thay vì một body riêng như `{ status: 'error' }`. Client và log chỉ phải hiểu một định dạng lỗi.
+- **Test DB suy ra từ `DATABASE_URL`** và có chốt an toàn: nếu tên DB không phải `pixelmart_test` thì test dừng trước khi reset. `migrate reset` xoá toàn bộ dữ liệu, nên chốt này là bắt buộc, không phải tuỳ chọn.
+- **Seed không đổi mật khẩu admin đã có** (`update: {}`). Chạy lại seed là an toàn ngay cả khi sau này mật khẩu admin được đổi. Muốn áp mật khẩu mới từ env ở local: xoá user trong Prisma Studio hoặc reset DB.
+- **Không có `postinstall: prisma generate`.** Lệnh generate cần `apps/api/.env` (do `env()` trong `prisma.config.ts`), nên trên một bản clone sạch `postinstall` sẽ làm `pnpm install` thất bại. Thay vào đó README ghi rõ bước `pnpm db:generate`.
+- **Mật khẩu admin không có giá trị mặc định trong code**, chỉ có giá trị giả trong `.env.example`.
+- **Thêm CHECK `users_email_lowercase`** (`email = lower(email)`). DATABASE.md vốn ghi email "lưu dạng chữ thường" nhưng chưa có gì bắt buộc điều đó. Thiếu constraint này, `Admin@x` và `admin@x` có thể thành hai user.
+
+### 4. File cần tạo
+Xem bảng ở mục 3. Chưa tạo: `CatalogModule` và ánh xạ lỗi Prisma → HTTP (V1.4), `OrdersModule` và sinh mã đơn hàng (V1.7), `AuthModule` (V1.8), `apps/web`.
+
+### 5. Test cần viết và chạy
+Quy ước chung nằm ở [TESTING.md](../../TESTING.md). Integration test cần `pnpm db:up`.
+
+- **Unit `test/integration/test-database.spec.ts`** (chạy trong `pnpm --filter api test`, không cần DB): `testDatabaseUrl` đổi đúng tên DB, giữ nguyên user/password/host/port; throw khi URL không hợp lệ.
+- **Unit `src/modules/health/health.controller.spec.ts`:** thêm các ca cho `ready()` với `PrismaService` giả:
+  - `$queryRaw` resolve → `{ status: 'ok', checks: { database: 'up' } }`;
+  - `$queryRaw` reject → `ServiceUnavailableException`;
+  - `$queryRaw` không bao giờ resolve → `ServiceUnavailableException` sau timeout (dùng `vi.useFakeTimers()`, không chờ 1 giây thật).
+- **Integration `test/integration/migrations.int-spec.ts`:** bảng `_prisma_migrations` có đúng 2 dòng, cả hai có `finished_at` khác null và `rolled_back_at` null (AC-1.3-01).
+- **Integration `test/integration/schema.int-spec.ts`** (đọc catalog của PostgreSQL):
+  - `information_schema.columns`: mọi cột tiền là `numeric` với `numeric_precision = 12`, `numeric_scale = 2`; mọi cột `*_at` là `timestamp with time zone` (AC-1.3-03).
+  - `pg_constraint`: FK `products.category_id` là RESTRICT, `order_items.order_id` là CASCADE, `order_items.product_id` là SET NULL; có các unique trong DATABASE.md (AC-1.3-02).
+  - `pg_indexes`: có index trên `order_items(product_id)` và `products(status, created_at DESC)` (AC-1.3-02).
+- **Integration `test/integration/constraints.int-spec.ts`** (AC-1.3-04). Mỗi ca insert bằng `$executeRaw` (SQL thuần, để chứng minh chính **database** từ chối chứ không phải Prisma Client):
+  - **Ca đối chứng trước:** một dòng hợp lệ insert được. Thiếu ca này, test "bị từ chối" có thể pass vì một lỗi khác (sai tên cột, thiếu cột NOT NULL).
+  - `products.price = -1` → bị từ chối bởi `products_price_nonnegative`.
+  - `order_items.quantity` bằng `0` và `100` → `order_items_quantity_range`.
+  - `line_total` khác `unit_price * quantity` → `order_items_line_total_consistent`.
+  - `orders.total = -1` → `orders_totals_nonnegative`.
+  - `users.email = 'Admin@PixelMart.local'` → `users_email_lowercase`.
+  - Kiểm tra **đúng tên constraint** trong lỗi, không chỉ "có lỗi". Ghi lại hình dạng lỗi thật mà Prisma 7 trả cho `$executeRaw` (class, `code`, chỗ chứa tên constraint và SQLSTATE `23514`) vào mục 3 sau lần chạy đầu, như cách V1.2 ghi tên trường `req.id`.
+  - Dọn dữ liệu của chính file này trong `afterEach` (xoá theo thứ tự order_items → orders → products → categories).
+- **Integration `test/integration/seed.int-spec.ts`** (AC-1.3-05): gọi `seed(prisma, …)` **hai lần** với mật khẩu test; sau mỗi lần đếm đúng 4 / 24 / 1; đếm `DRAFT` = 4; `password_hash` bắt đầu bằng `$argon2id$`, khác mật khẩu gốc, và `argon2.verify` trả `true`; email được lưu chữ thường.
+- **Integration `test/integration/health.int-spec.ts`:** dựng `AppModule` như e2e (gọi `configureApp`), `GET /health/ready` → 200, `checks.database === 'up'` (AC-1.3-06, nhánh DB chạy).
+- **e2e của V1.2** vẫn pass **khi Postgres đang dừng** (chứng minh bước 8: app không kết nối DB lúc khởi động).
+
+### 6. Kiểm tra thủ công
+| Bước | Lệnh | Kết quả mong đợi |
+|---|---|---|
+| Phiên bản | `pnpm --filter api exec prisma --version` | `prisma` và `@prisma/client` đều `7.10.0`. |
+| Migrate | `pnpm db:up` rồi `pnpm db:migrate` | "Already in sync" sau khi đã có 2 migration; không có cảnh báo drift. |
+| Bảng | `pnpm db:psql`, rồi `\dt` và `\d products` | 5 bảng + `_prisma_migrations`. `price numeric(12,2)`, `created_at timestamp(3) with time zone`, FK `ON DELETE RESTRICT`, các CHECK constraint hiện ở cuối. |
+| Index | `\di` trong psql | Có đủ các index trong DATABASE.md. |
+| Seed | `pnpm db:seed` hai lần, sau mỗi lần chạy `SELECT count(*) FROM products;` | Cả hai lần đều là `24`. |
+| Mật khẩu | `SELECT email, left(password_hash, 10) FROM users;` | Một dòng, hash bắt đầu bằng `$argon2id$`. |
+| Studio | `pnpm db:studio` | Mở được, thấy dữ liệu seed. |
+| Readiness | `pnpm dev:api`, `curl -i localhost:4000/health/ready` | `200`, `checks.database: "up"`. |
+| DB dừng | `pnpm db:down`, rồi `curl -i localhost:4000/health/ready` và `curl -i localhost:4000/health` | `/health/ready` → `503` đúng định dạng lỗi chuẩn, message không lộ chi tiết DB, log có một dòng `warn`. `/health` vẫn `200`. |
+| Khởi động khi DB dừng | Tắt API, giữ DB dừng, `pnpm dev:api` | API khởi động bình thường. Chạy `pnpm db:up` xong thì `/health/ready` tự về `200`, không cần restart API. |
+| Không chạm DB dev | `SELECT count(*) FROM products;` trên `pixelmart`, chạy `pnpm --filter api test:int`, rồi đếm lại | Hai lần đếm bằng nhau (AC-1.3-07). |
+
+### 7. Acceptance criteria
+AC-1.3-01 … AC-1.3-07 trong [ACCEPTANCE_CRITERIA.md](ACCEPTANCE_CRITERIA.md#sprint-v13--database-schema-with-prisma).
+
+### 8. Bài tập troubleshooting
+1. **Sửa migration đã áp dụng:** thêm một dòng comment vào `…_add_check_constraints/migration.sql` rồi chạy `pnpm db:migrate`. Đọc thông báo. Prisma phát hiện bằng cách nào? (Gợi ý: cột `checksum` trong `_prisma_migrations`.) Hoàn tác bằng `git checkout` và giải thích vì sao cách sửa đúng luôn là **viết một migration mới**.
+2. **Drift:** trong psql chạy `ALTER TABLE products ADD COLUMN lab_note text;`, rồi `pnpm db:migrate`. Vì sao Prisma đề nghị reset? Ở production, chuyện này có nghĩa gì? Khôi phục bằng `DROP COLUMN`.
+3. **Thiếu `prisma generate`:** xoá `apps/api/src/generated/` và chạy `pnpm --filter api build`. Đọc lỗi, giải thích vì sao Prisma 7 không còn tạo client trong `node_modules`, rồi sửa bằng `pnpm db:generate`.
+4. **Float và numeric:** trong Node chạy `0.1 + 0.2`; trong psql chạy `SELECT 0.1::numeric + 0.2::numeric;` và `SELECT 0.1::float8 + 0.2::float8;`. Giải thích kết quả và nối với ADR-0003.
+5. **Liveness và readiness:** dừng DB khi API đang chạy. Vì sao `/health` vẫn 200? Nếu một orchestrator restart process mỗi khi `/health` trả lỗi, việc gộp kiểm tra DB vào `/health` gây ra hậu quả gì?
+6. **Chốt an toàn của test DB:** tạm sửa `testDatabaseUrl` để trả URL của `pixelmart` (chỉ đọc, không chạy test). Theo dõi xem chốt nào chặn lại, và điều gì xảy ra với dữ liệu dev nếu không có chốt đó. Hoàn tác ngay.
+
+### 9. Câu hỏi ôn tập (✋ trước khi code, ✅ sau khi xong)
+1. ✋ Primary key, foreign key và unique constraint khác nhau thế nào? Cho ví dụ từ schema PixelMart.
+2. ✋ Vì sao xoá danh mục là `RESTRICT`, còn xoá sản phẩm làm `order_items.product_id` thành `NULL`?
+3. ✋ Vì sao order item lưu snapshot tên và giá thay vì join sang bảng sản phẩm?
+4. ✋ Vì sao tiền không dùng float? `numeric(12,2)` lưu được tối đa bao nhiêu?
+5. ✋ Migration là gì, và vì sao không được sửa một migration đã áp dụng?
+6. ✅ `migrate dev`, `migrate deploy` và `migrate reset` khác nhau thế nào? Cái nào được chạy ở production?
+7. ✅ CHECK constraint bảo vệ điều gì mà validation ở API không bảo vệ được?
+8. ✅ Vì sao PostgreSQL không tự tạo index cho cột FK, và index trên `order_items(product_id)` giúp gì khi xoá sản phẩm?
+9. ✅ Vì sao seed phải idempotent? Upsert giải quyết điều đó thế nào?
+10. ✅ Liveness và readiness khác nhau thế nào? Vì sao API không gọi `$connect()` lúc khởi động?
+
+### 10. Checkpoint
+Commit theo nhóm có ý nghĩa, ví dụ:
+1. `docs: plan V1.3 database schema sprint`
+2. `chore(api): add Prisma 7, argon2 and review allowed builds`
+3. `feat(api): add Prisma schema and initial migration`
+4. `feat(api): add check constraints migration`
+5. `feat(api): add PrismaService and readiness endpoint`
+6. `feat(api): add idempotent seed`
+7. `test(api): cover migrations, constraints, seed and readiness`
+
+Cuối cùng cập nhật sprint log trong ROADMAP. Sau đó **dừng lại** và chờ bạn xác nhận AC-1.3-01…07 trước khi sang V1.4.
 
 ## Sprint V1.4 — Public catalog API
 

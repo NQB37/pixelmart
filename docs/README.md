@@ -8,7 +8,7 @@ PixelMart là một nền tảng thương mại điện tử học theo dự án
 |---|---|---|
 | [ROADMAP.md](ROADMAP.md) | Các phiên bản, sprint, dependency giữa chúng, trạng thái, sprint log | Đang dùng |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Những gì **thực sự đang chạy** hiện tại, cùng mục tiêu của phiên bản hiện tại | Đang dùng |
-| [DATABASE.md](DATABASE.md) | Mô hình dữ liệu, constraint, index, lý do thiết kế | Thiết kế V1 (chưa migrate) |
+| [DATABASE.md](DATABASE.md) | Mô hình dữ liệu, constraint, index, lý do thiết kế | Thiết kế V1, plan ở V1.3 (chưa migrate) |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Môi trường local, phiên bản công cụ, lệnh dùng hằng ngày | Đang dùng |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Các sự cố lặp lại và nguyên nhân gốc | Đang dùng |
 | [decisions/](decisions/) | Architecture Decision Records (ADR) | Đang dùng |

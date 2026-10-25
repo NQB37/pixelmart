@@ -6,7 +6,7 @@ Một nền tảng thương mại điện tử theo định hướng production,
 
 ## Trạng thái
 
-Sprint V1.1 (nền tảng workspace + PostgreSQL local) đã hoàn thành. Sprint V1.2 (khung NestJS API) đã có đủ bằng chứng cho AC-1.2-01…07 và đang chờ xác nhận. Xem [docs/ROADMAP.md](docs/ROADMAP.md).
+Sprint V1.1 (nền tảng workspace + PostgreSQL local) và V1.2 (khung NestJS API) đã hoàn thành. Sprint V1.3 (database schema với Prisma) đã có plan chi tiết. Xem [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Tài liệu
 

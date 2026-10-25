@@ -82,7 +82,8 @@ Path không có prefix. Các endpoint của admin nằm dưới `/admin` để r
 
 | Method | Path | Auth | Mục đích |
 |---|---|---|---|
-| GET | `/health` | public | Liveness + kết nối tới DB |
+| GET | `/health` | public | Liveness: process còn sống, không chạm DB (V1.2) |
+| GET | `/health/ready` | public | Readiness: `SELECT 1` tới DB, `503` khi DB không phản hồi (V1.3) |
 | GET | `/categories` | public | Tất cả danh mục |
 | GET | `/categories/:slug` | public | Một danh mục |
 | GET | `/products?page&pageSize&category` | public | Sản phẩm đã publish, có pagination |

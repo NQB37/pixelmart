@@ -68,13 +68,61 @@ Các vấn đề dự kiến, được viết **trước khi** chúng xảy ra. 
 - **Xác nhận:** `echo $DATABASE_URL` (PowerShell: `$env:DATABASE_URL`).
 - **Sửa:** `unset DATABASE_URL` (PowerShell: `Remove-Item Env:DATABASE_URL`) và sửa đúng file `apps/api/.env`.
 
+## V1.3 — Prisma và database (dự kiến)
+
+### Cài `prisma` ra version `8.0.0-rc.x`
+- **Nguyên nhân gốc:** dist-tag `latest` của `prisma` từng trỏ tới một bản RC, trong khi `@prisma/client@latest` là 7.10.0 ([ADR-0002](../../decisions/0002-tool-and-dependency-versions.md)).
+- **Xác nhận:** `pnpm --filter api exec prisma --version` cho thấy CLI và client khác version.
+- **Sửa:** cài lại với version chính xác `@7.10.0` và `--save-exact` (IMPLEMENTATION V1.3 bước 2).
+
+### Prisma CLI báo thiếu `DATABASE_URL`, kể cả với `prisma generate`
+- **Nguyên nhân gốc:** Prisma 7 không tự đọc `.env`. `prisma.config.ts` load nó qua `dotenv/config`, theo cwd. Hoặc `apps/api/.env` chưa có, hoặc lệnh chạy từ sai thư mục. `env()` báo lỗi ngay khi thiếu biến, kể cả khi lệnh không kết nối DB.
+- **Sửa:** tạo `apps/api/.env` từ `.env.example`, chạy Prisma qua script ở gốc (`pnpm db:generate`, …) hoặc `pnpm --filter api exec prisma …`, để cwd là `apps/api`.
+
+### `Cannot find module '../generated/prisma/client'`
+- **Nguyên nhân gốc:** chưa chạy `prisma generate`. Từ Prisma 7, client sinh vào `src/generated/prisma` (bị git bỏ qua), không còn nằm trong `node_modules`, và `migrate dev` không còn tự generate.
+- **Sửa:** `pnpm db:generate`. Chạy lại mỗi khi sửa `schema.prisma`.
+
+### `Can't reach database server at localhost:5432` (P1001)
+- **Nguyên nhân gốc:** DB chưa chạy/chưa healthy, sai port (đã đổi `POSTGRES_PORT` nhưng chưa sửa `DATABASE_URL`), hoặc sai host (`localhost` khi chạy từ máy bạn, `postgres` khi chạy bên trong Docker ở V4).
+- **Xác nhận:** `docker compose ps`; so port trong `DATABASE_URL` với `POSTGRES_PORT`.
+
+### `password authentication failed` khi Prisma kết nối, dù `pnpm db:psql` vẫn vào được
+- **Nguyên nhân gốc:** `psql` trong container đi qua socket local nên không cần mật khẩu; Prisma đi qua TCP nên mật khẩu phải đúng. Thường do mật khẩu trong `DATABASE_URL` khác `POSTGRES_PASSWORD`, hoặc volume được tạo với mật khẩu cũ (xem mục V1.1 ở trên).
+
+### `pnpm install` cảnh báo build script bị bỏ qua (`argon2`, có thể cả package của Prisma)
+- **Nguyên nhân gốc:** pnpm không chạy lifecycle script của dependency nếu chưa được cho phép trong `allowBuilds`. Đây là biện pháp bảo mật supply chain.
+- **Triệu chứng nếu bỏ qua:** seed lỗi lúc `import argon2` vì thiếu native binding.
+- **Sửa:** phê duyệt đúng package bạn nhận ra, commit `pnpm-workspace.yaml`. Không dùng cờ cho phép mọi package.
+
+### Cột thời gian ra `timestamp(3) without time zone`
+- **Nguyên nhân gốc:** khai báo `DateTime` mà thiếu `@db.Timestamptz(3)`. Mặc định của Prisma với PostgreSQL là `timestamp(3)`.
+- **Sửa:** thêm `@db.Timestamptz(3)` và tạo **migration mới**. Không sửa migration đã áp dụng.
+
+### `The migration … was modified after it was applied`
+- **Nguyên nhân gốc:** file `migration.sql` đã áp dụng bị sửa. Prisma lưu checksum của mỗi migration trong `_prisma_migrations` và so sánh lại.
+- **Sửa:** khôi phục file bằng git, rồi đưa thay đổi vào một migration mới. Chỉ ở DB dev có thể bỏ được dữ liệu thì mới chấp nhận reset.
+
+### `Drift detected` khi chạy `migrate dev`
+- **Nguyên nhân gốc:** cấu trúc DB không còn khớp lịch sử migration, thường vì ai đó sửa bảng trực tiếp trong psql.
+- **Sửa:** hoàn tác thay đổi thủ công, hoặc (chỉ ở dev) reset. Mọi thay đổi cấu trúc phải đi qua migration.
+
+### `migrate reset` bị chặn khi chạy bởi một AI agent
+- **Nguyên nhân gốc:** các bản Prisma gần đây chặn lệnh phá dữ liệu (như `migrate reset --force`) khi phát hiện đang chạy trong một AI coding agent, và yêu cầu người dùng đồng ý rõ ràng. `globalSetup` của `test:int` chạy đúng lệnh này.
+- **Sửa:** bạn tự chạy `pnpm --filter api test:int` trong terminal của mình. Đọc thông báo của Prisma; chỉ đồng ý khi URL trỏ tới `pixelmart_test`.
+
+### Test constraint "pass" nhưng không chứng minh gì
+- **Nguyên nhân gốc:** test chỉ kiểm tra "có lỗi", và lỗi thật là sai tên cột hoặc thiếu cột NOT NULL, không phải CHECK.
+- **Phòng tránh:** luôn có ca đối chứng hợp lệ, và kiểm tra tên constraint trong lỗi (IMPLEMENTATION V1.3 mục 5).
+
+### `/health/ready` treo lâu khi DB không phản hồi
+- **Nguyên nhân gốc:** thiếu timeout. Khi container dừng hẳn, kết nối bị từ chối ngay; khi DB treo hoặc mạng chậm, query có thể chờ rất lâu.
+- **Sửa:** đua query với `READINESS_TIMEOUT_MS` (IMPLEMENTATION V1.3 bước 9).
+
 ## Các sprint sau của V1 (dự kiến)
 
 | Sprint | Vấn đề có thể gặp | Gợi ý nguyên nhân gốc |
 |---|---|---|
-| V1.3 | Cài `prisma` ra version `8.0.0-rc.x` | dist-tag `latest` đang trỏ tới một bản RC. Cố định chính xác `7.10.0` ([ADR-0002](../../decisions/0002-tool-and-dependency-versions.md)). |
-| V1.3 | Không tìm thấy `DATABASE_URL` khi chạy Prisma CLI | Prisma 7 không tự động load `.env`. Hãy load nó trong `prisma.config.ts`. |
-| V1.3 | `Can't reach database server at localhost:5432` | DB chưa chạy/chưa healthy, sai port, hoặc sai host (`localhost` khi từ máy bạn, còn `postgres` khi từ bên trong Docker ở V4). |
 | V1.5 | Ảnh từ host bên ngoài lỗi trong `next/image` | Host chưa được liệt kê trong `images.remotePatterns`. |
 | V1.6 | Cảnh báo "Hydration failed" | Server render một cart rỗng trong khi client render nội dung từ localStorage. Chỉ đọc localStorage sau khi component đã mount. |
 | V1.7 | Tổng tiền kiểu `59.970000000000006` | Đâu đó đang tính bằng Number thay vì Decimal. |

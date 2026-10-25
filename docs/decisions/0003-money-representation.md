@@ -26,3 +26,13 @@ Kiểu `number` của JavaScript là số thực dấu phẩy động IEEE-754: 
 - ➕ Tổng tiền chính xác. CHECK của database `line_total = unit_price * quantity` đáng tin cậy.
 - ➖ Frontend xử lý tiền dưới dạng chuỗi. Cần một helper nhỏ để định dạng.
 - Việc tiếp theo: nếu sau này cần đa tiền tệ thì phải có loại tiền theo từng sản phẩm và quy tắc tỷ giá (FX), và sẽ có ADR riêng.
+
+## Sửa đổi 2026-10-22 (Sprint V1.3)
+
+**Bối cảnh:** quyết định gốc để mở loại tiền của cửa hàng. Seed của V1.3 cần giá thật, nên phải chọn ngay bây giờ.
+
+**Quyết định:** `STORE_CURRENCY` là **EUR**. Dữ liệu seed và mọi giá trong V1 đều tính bằng EUR.
+
+**Lý do:** EUR có hai chữ số thập phân, khớp với `numeric(12,2)` và với cách Stripe (V3) biểu diễn số tiền theo cent, nên không phải đổi gì trong ADR này. VND đã được cân nhắc và bị loại: VND không có phần thập phân, nên hoặc phải đổi sang `numeric(12,0)`, hoặc có hai chữ số `.00` luôn vô nghĩa, và Stripe coi VND là zero-decimal currency.
+
+**Hệ quả:** biến `STORE_CURRENCY` được thêm vào env của API ở V1.7, lúc đơn hàng đầu tiên được tạo, chứ không thêm sớm ở V1.3.
